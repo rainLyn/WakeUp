@@ -31,6 +31,8 @@ const (
 	ModeConfirm            // 删除确认弹窗：Enter/y 确认
 	ModeWakeConfirm        // 唤醒确认弹窗：Enter/y 确认
 	ModeResult             // 操作结果弹窗：任意键关闭
+	ModeMultiSelect       // 多选模式：space 选中/取消，j/k 导航，enter 批量唤醒
+	ModeBatchWakeConfirm  // 批量唤醒确认弹窗：Enter/y 确认
 )
 
 /* ---------------------------------------------------------------------------
@@ -255,4 +257,16 @@ type SaveResultMsg struct {
 type WOLResultMsg struct {
 	Err       error
 	DeviceMAC string
+}
+
+// WOLSingleResult 单次唤醒执行结果
+type WOLSingleResult struct {
+	DeviceName string
+	MAC        string
+	Err        error
+}
+
+// BatchWOLResultMsg 批量唤醒完成消息
+type BatchWOLResultMsg struct {
+	Results []WOLSingleResult
 }

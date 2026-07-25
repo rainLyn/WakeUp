@@ -4,12 +4,13 @@
  * 职责：
  *   1. 展示所有已保存设备（表格视图，列均分、居中对齐）
  *   2. Vim 普通模式：j/k 浏览、a 新增、e 编辑、dd 删除、Enter 唤醒
- *   3. 内联弹窗：删除确认、唤醒确认 + 异步发送 + 结果反馈
+ *   3. Space 进入多选模式，批量选中后 Enter 同时唤醒
+ *   4. 内联弹窗：删除确认、唤醒确认、批量唤醒确认 + 异步发送 + 结果反馈
  *
  * 设计要点：
- *   - Enter 唤醒确认弹窗，Enter/y 均可确认
+ *   - Enter 单设备唤醒，Space 进入多选模式——消除键位语义重叠
  *   - dd 双键序列通过 pendingD 标志实现
- *   - 选中行用 ▶ 箭头标识，不用背景色
+ *   - 选中行用 ▶ 箭头标识，多选模式叠加 [✓]/[ ] 复选框
  *   - 帮助栏通过 PinBottom 始终固定在屏幕底部
  */
 
@@ -18,6 +19,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"WakeUp/store"
 	"WakeUp/wol"
@@ -33,16 +35,17 @@ import (
 // ListModel 设备列表页面模型
 type ListModel struct {
 	store       *store.Store
-	cursor      int    // 当前光标位置
-	mode        int    // 当前模态
-	pendingD    bool   // d 键前缀等待（dd 双键检测）
-	targetIdx   int    // 当前操作目标设备索引（唤醒/删除共用）
-	status      string // 内联状态提示（仅表单返回时暂存）
+	cursor      int          // 当前光标位置
+	mode        int          // 当前模态
+	pendingD    bool         // d 键前缀等待（dd 双键检测）
+	targetIdx   int          // 当前操作目标设备索引（唤醒/删除共用）
+	status      string       // 内联状态提示（仅表单返回时暂存）
 	isError     bool
-	resultTitle string // 结果弹窗标题
-	resultMsg   string // 结果弹窗内容
-	resultIsErr bool   // 结果是否为错误
-	hint        string // 页面上下文提示
+	resultTitle string       // 结果弹窗标题
+	resultMsg   string       // 结果弹窗内容
+	resultIsErr bool         // 结果是否为错误
+	selected    map[int]bool // 多选模式中已选中的设备索引
+	hint        string       // 页面上下文提示
 	width       int
 	height      int
 }
@@ -76,6 +79,28 @@ func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showResult("✗ 唤醒失败", fmt.Sprintf("%v", msg.Err), true)
 		} else {
 			m.showResult("✓ 唤醒成功", fmt.Sprintf("唤醒指令已发送 (%s)", msg.DeviceMAC), false)
+		}
+
+	case BatchWOLResultMsg:
+		var ok, fail int
+		var details []string
+		for _, r := range msg.Results {
+			if r.Err != nil {
+				fail++
+				details = append(details, fmt.Sprintf("%s: %v", r.DeviceName, r.Err))
+			} else {
+				ok++
+			}
+		}
+		if fail == 0 {
+			m.showResult("✓ 批量唤醒完成",
+				fmt.Sprintf("已向 %d 台设备发送唤醒指令", ok), false)
+		} else {
+			body := fmt.Sprintf("成功 %d 台，失败 %d 台", ok, fail)
+			if len(details) > 0 {
+				body += "\n" + strings.Join(details, "\n")
+			}
+			m.showResult("✗ 批量唤醒部分失败", body, true)
 		}
 
 	case tea.KeyMsg:
@@ -124,8 +149,9 @@ func (m ListModel) View() string {
 	b.WriteString(RenderStatus(m.status, m.isError))
 	b.WriteString("\n")
 
-	// ---- 内联弹窗（删除/唤醒/结果） ----
-	if m.mode == ModeConfirm || m.mode == ModeWakeConfirm || m.mode == ModeResult {
+	// ---- 内联弹窗（删除/单设备唤醒/批量唤醒/结果） ----
+	if m.mode == ModeConfirm || m.mode == ModeWakeConfirm ||
+		m.mode == ModeBatchWakeConfirm || m.mode == ModeResult {
 		b.WriteString("\n")
 		b.WriteString(m.renderPopup())
 	}
@@ -166,6 +192,18 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.isError = false
 		}
 
+	// ---- 批量唤醒确认 - Enter/y 确认，n/ESC 取消 ----
+	case ModeBatchWakeConfirm:
+		switch key {
+		case "y", "Y", "enter":
+			return m.executeBatchWake()
+		case "n", "N", "esc":
+			m.mode = ModeNormal
+			m.selected = nil
+			m.status = ""
+			m.isError = false
+		}
+
 	// ---- 结果弹窗：任意键关闭 ----
 	case ModeResult:
 		m.mode = ModeNormal
@@ -201,7 +239,7 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return NewFormModel(m.store, m.width, m.height, m.cursor), nil
 			}
 
-		case "enter", " ":
+		case "enter":
 			if m.store.Count() == 0 {
 				m.setStatus("没有可唤醒的设备", true)
 			} else {
@@ -211,9 +249,51 @@ func (m ListModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.isError = false
 			}
 
+		case " ":
+			if m.store.Count() == 0 {
+				m.setStatus("没有设备可选", true)
+			} else {
+				m.mode = ModeMultiSelect
+				m.selected = make(map[int]bool)
+				m.selected[m.cursor] = true
+				m.status = ""
+				m.isError = false
+			}
+
 		case "q", "ctrl+c":
 			return m, tea.Quit
 
+		default:
+			m.status = ""
+			m.isError = false
+		}
+
+	// ---- 多选模式：space 切换选中，j/k 导航，enter 批量唤醒 ----
+	case ModeMultiSelect:
+		switch key {
+		case " ":
+			if m.selected[m.cursor] {
+				delete(m.selected, m.cursor)
+			} else {
+				m.selected[m.cursor] = true
+			}
+		case "j", "down":
+			m.moveCursor(1)
+		case "k", "up":
+			m.moveCursor(-1)
+		case "enter":
+			if len(m.selected) == 0 {
+				m.setStatus("未选中任何设备", true)
+			} else {
+				m.mode = ModeBatchWakeConfirm
+				m.status = ""
+				m.isError = false
+			}
+		case "q", "esc":
+			m.mode = ModeNormal
+			m.selected = nil
+			m.status = ""
+			m.isError = false
 		default:
 			m.status = ""
 			m.isError = false
@@ -237,14 +317,23 @@ func (m ListModel) bindings() []KeyBinding {
 		return []KeyBinding{
 			{"Enter/y", "确认唤醒"}, {"n/ESC", "取消"},
 		}
+	case ModeBatchWakeConfirm:
+		return []KeyBinding{
+			{"Enter/y", "批量唤醒"}, {"n/ESC", "取消"},
+		}
 	case ModeResult:
 		return []KeyBinding{
 			{"任意键", "关闭"},
 		}
+	case ModeMultiSelect:
+		return []KeyBinding{
+			{"j/k", "移动"}, {"Space", "选中/取消"},
+			{"Enter", "批量唤醒"}, {"q/ESC", "退出多选"},
+		}
 	default:
 		return []KeyBinding{
-			{"j/k", "移动"}, {"Enter", "唤醒"}, {"a", "新增"},
-			{"e", "编辑"}, {"dd", "删除"}, {"q", "退出"},
+			{"j/k", "移动"}, {"Enter", "唤醒"}, {"Space", "多选"},
+			{"a", "新增"}, {"e", "编辑"}, {"dd", "删除"}, {"q", "退出"},
 		}
 	}
 }
@@ -255,7 +344,12 @@ func (m ListModel) bindings() []KeyBinding {
 
 // colW 计算均分列宽，5 列均分终端宽度（减去箭头 2 字符 + 列间 4 空格）
 func (m ListModel) colW() int {
-	w := (m.width - 6) / 5
+	// 多选模式多 4 字符复选框，压缩列宽
+	arrowW := 2
+	if m.mode == ModeMultiSelect {
+		arrowW = 6
+	}
+	w := (m.width - arrowW - 4) / 5
 	if w < 6 {
 		w = 6
 	}
@@ -283,7 +377,11 @@ func (m ListModel) renderHeader() string {
 		padCenter("端口", w),
 		padCenter("广播地址", w),
 	}
-	return InfoStyle.Render("  " + strings.Join(cells, " "))
+	prefix := "  "
+	if m.mode == ModeMultiSelect {
+		prefix = "      " // 对齐复选框 + 箭头
+	}
+	return InfoStyle.Render(prefix + strings.Join(cells, " "))
 }
 
 func (m ListModel) renderRow(idx int, d store.Device) string {
@@ -295,13 +393,30 @@ func (m ListModel) renderRow(idx int, d store.Device) string {
 		padCenter(fmt.Sprintf("%d", d.Port), w),
 		padCenter(d.Address, w),
 	}
+
 	arrow := Arrow(idx == m.cursor)
 	row := arrow + strings.Join(cells, " ")
 
+	// 行级样式：光标行高亮，其余常规
+	var styled string
 	if idx == m.cursor {
-		return SelectedStyle.Render(row)
+		styled = SelectedStyle.Render(row)
+	} else {
+		styled = NormalRowStyle.Render(row)
 	}
-	return NormalRowStyle.Render(row)
+
+	// 多选模式：前置复选框，样式独立于行样式
+	if m.mode == ModeMultiSelect {
+		var cb string
+		if m.selected[idx] {
+			cb = SuccessStyle.Render("[✓]")
+		} else {
+			cb = DimRowStyle.Render("[ ]")
+		}
+		return cb + " " + styled
+	}
+
+	return styled
 }
 
 /* ---------------------------------------------------------------------------
@@ -312,6 +427,11 @@ func (m ListModel) renderPopup() string {
 	// 结果弹窗不需要目标设备
 	if m.mode == ModeResult {
 		return m.renderResultPopup()
+	}
+
+	// 批量唤醒弹窗：数据源是 selected 集合，不是单个 targetIdx
+	if m.mode == ModeBatchWakeConfirm {
+		return m.renderBatchWakePopup()
 	}
 
 	dev, err := m.store.FindByIndex(m.targetIdx)
@@ -364,13 +484,37 @@ func (m ListModel) renderResultPopup() string {
 	return lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(popup)
 }
 
+// renderBatchWakePopup 渲染批量唤醒确认弹窗
+func (m ListModel) renderBatchWakePopup() string {
+	devices := m.store.List()
+	var names []string
+	for idx := range m.selected {
+		if idx < len(devices) {
+			names = append(names, devices[idx].Name)
+		}
+	}
+
+	lines := []string{
+		fmt.Sprintf("即将向 %d 台设备发送唤醒指令：", len(names)),
+	}
+	for _, name := range names {
+		lines = append(lines, "  • "+name)
+	}
+
+	bindings := []KeyBinding{
+		{"Enter/y", "批量发送唤醒包"}, {"n/ESC", "取消"},
+	}
+	popup := RenderPopup(m.width, "⚡ 确认批量唤醒", PopupTitleWarn, lines, bindings)
+	return lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(popup)
+}
+
 // showResult 显示操作结果弹窗
 func (m *ListModel) showResult(title, msg string, isErr bool) {
 	m.resultTitle = title
 	m.resultMsg = msg
 	m.resultIsErr = isErr
 	m.mode = ModeResult
-	m.status = ""  // 清除内联状态，避免与弹窗重复
+	m.status = "" // 清除内联状态，避免与弹窗重复
 	m.isError = false
 }
 
@@ -481,5 +625,41 @@ func (m ListModel) executeWake() (tea.Model, tea.Cmd) {
 			Err:       err,
 			DeviceMAC: dev.MAC,
 		}
+	}
+}
+
+// executeBatchWake 并发向所有选中设备发送 WOL 魔术包
+func (m ListModel) executeBatchWake() (tea.Model, tea.Cmd) {
+	devices := m.store.List()
+
+	// 从 selected 集合中收集目标设备
+	targets := make([]store.Device, 0, len(m.selected))
+	for idx := range m.selected {
+		if idx < len(devices) {
+			targets = append(targets, devices[idx])
+		}
+	}
+
+	m.mode = ModeNormal
+	m.selected = nil
+	m.setStatus("正在批量发送唤醒指令...", false)
+
+	return m, func() tea.Msg {
+		var wg sync.WaitGroup
+		results := make([]WOLSingleResult, len(targets))
+		for i, dev := range targets {
+			wg.Add(1)
+			go func(idx int, d store.Device) {
+				defer wg.Done()
+				err := wol.SendMagicPacket(d.MAC, d.Address, d.Port)
+				results[idx] = WOLSingleResult{
+					DeviceName: d.Name,
+					MAC:        d.MAC,
+					Err:        err,
+				}
+			}(i, dev)
+		}
+		wg.Wait()
+		return BatchWOLResultMsg{Results: results}
 	}
 }
