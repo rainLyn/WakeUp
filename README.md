@@ -16,11 +16,43 @@ WakeUp is a [Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI applica
 
 ## Installation
 
-### Prerequisites
+### Download from Releases
 
-[Go](https://go.dev/dl/) 1.26 or later.
+The simplest way — grab a prebuilt binary, no Go toolchain needed.
+
+1. Go to the [Releases page](https://github.com/rainLyn/WakeUp/releases)
+2. Download the binary that matches your platform:
+
+| Your Machine | Download |
+|-------------|----------|
+| macOS Intel | `wakeup-darwin-amd64-v*` |
+| macOS Apple Silicon | `wakeup-darwin-arm-v*` |
+| Linux x86_64 | `wakeup-linux-amd64-v*` |
+| Linux ARM | `wakeup-linux-arm-v*` |
+| Windows x86_64 | `wakeup-windows-amd64-v*.exe` |
+
+**macOS / Linux:**
+
+```bash
+# Make it executable
+chmod +x wakeup-*
+# Optional — rename and drop it anywhere on your $PATH
+sudo mv wakeup-*-v* /usr/local/bin/wakeup
+```
+
+Or just run it in place:
+
+```bash
+./wakeup-darwin-arm-v0.1.0
+```
+
+**Windows:** Rename to `wakeup.exe` and run it from cmd / PowerShell, or place it in a directory listed in `%PATH%`.
 
 ### Build from Source
+
+#### Prerequisites
+
+[Go](https://go.dev/dl/) 1.26 or later.
 
 ```bash
 git clone https://github.com/rainLyn/WakeUp.git
@@ -34,7 +66,7 @@ The resulting binary is `wakeup`. To install system-wide:
 make install
 ```
 
-### Makefile Targets
+#### Makefile Targets
 
 | Target | Description |
 |--------|-------------|

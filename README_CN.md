@@ -16,11 +16,43 @@ WakeUp 是一个基于 [Bubble Tea](https://github.com/charmbracelet/bubbletea) 
 
 ## 安装
 
-### 前置要求
+### 从 Release 下载（推荐）
 
-[Go](https://go.dev/dl/) 1.26 或更高版本。
+直接下载预编译好的二进制文件，无需安装 Go 环境。
+
+1. 打开 [Releases 页面](https://github.com/rainLyn/WakeUp/releases)
+2. 下载对应平台的二进制文件：
+
+| 你的设备 | 下载文件 |
+|-------------|----------|
+| macOS Intel | `wakeup-darwin-amd64-v*` |
+| macOS Apple Silicon | `wakeup-darwin-arm-v*` |
+| Linux x86_64 | `wakeup-linux-amd64-v*` |
+| Linux ARM | `wakeup-linux-arm-v*` |
+| Windows x86_64 | `wakeup-windows-amd64-v*.exe` |
+
+**macOS / Linux：**
+
+```bash
+# 赋予执行权限
+chmod +x wakeup-*
+# 可选 — 重命名并放到 $PATH 下的任意位置
+sudo mv wakeup-*-v* /usr/local/bin/wakeup
+```
+
+也可以直接在下载目录运行：
+
+```bash
+./wakeup-darwin-arm-v0.1.0
+```
+
+**Windows：** 重命名为 `wakeup.exe`，在 cmd 或 PowerShell 中直接运行，或放到 `%PATH%` 目录下。
 
 ### 从源码构建
+
+#### 前置要求
+
+[Go](https://go.dev/dl/) 1.26 或更高版本。
 
 ```bash
 git clone https://github.com/rainLyn/WakeUp.git
@@ -34,7 +66,7 @@ make
 make install
 ```
 
-### Makefile 目标
+#### Makefile 目标
 
 | 命令 | 说明 |
 |--------|-------------|
