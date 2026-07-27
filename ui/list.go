@@ -339,7 +339,7 @@ func (m ListModel) bindings() []KeyBinding {
 }
 
 /* ---------------------------------------------------------------------------
- * 表格渲染 — 列均分 + 居中对齐
+ * 表格渲染 — 列均分 + 左对齐
  * ---------------------------------------------------------------------------*/
 
 // colW 计算均分列宽，5 列均分终端宽度（减去箭头 2 字符 + 列间 4 空格）
@@ -356,26 +356,23 @@ func (m ListModel) colW() int {
 	return w
 }
 
-// padCenter 将文本在指定宽度内居中（兼容中文等宽字符）
-func padCenter(s string, width int) string {
+// padLeft 将文本在指定宽度内左对齐，右侧补空格（兼容中文等宽字符）
+func padLeft(s string, width int) string {
 	dispW := lipgloss.Width(s)
 	if dispW >= width {
 		return s
 	}
-	pad := width - dispW
-	left := pad / 2
-	right := pad - left
-	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+	return s + strings.Repeat(" ", width-dispW)
 }
 
 func (m ListModel) renderHeader() string {
 	w := m.colW()
 	cells := []string{
-		padCenter("序号", w),
-		padCenter("名称", w),
-		padCenter("MAC 地址", w),
-		padCenter("端口", w),
-		padCenter("广播地址", w),
+		padLeft("序号", w),
+		padLeft("名称", w),
+		padLeft("MAC 地址", w),
+		padLeft("端口", w),
+		padLeft("广播地址", w),
 	}
 	prefix := "  "
 	if m.mode == ModeMultiSelect {
@@ -387,11 +384,11 @@ func (m ListModel) renderHeader() string {
 func (m ListModel) renderRow(idx int, d store.Device) string {
 	w := m.colW()
 	cells := []string{
-		padCenter(fmt.Sprintf("%d", idx+1), w),
-		padCenter(d.Name, w),
-		padCenter(d.MAC, w),
-		padCenter(fmt.Sprintf("%d", d.Port), w),
-		padCenter(d.Address, w),
+		padLeft(fmt.Sprintf("%d", idx+1), w),
+		padLeft(d.Name, w),
+		padLeft(d.MAC, w),
+		padLeft(fmt.Sprintf("%d", d.Port), w),
+		padLeft(d.Address, w),
 	}
 
 	arrow := Arrow(idx == m.cursor)
